@@ -10,7 +10,7 @@ use crossterm::{
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 
-use crate::history::History;
+use crate::history::{History, State};
 
 const CELL_WIDTH: usize = 4;
 const CELL_HEIGHT: usize = 1;
@@ -24,9 +24,10 @@ enum Mode {
 #[derive(Clone)]
 pub enum Command {
     Insert { x: usize, y: usize, note: Note },
+    Delete { x: usize, y: usize },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Note {
     pitch: i8,
 }
@@ -34,7 +35,6 @@ pub struct Note {
 pub struct App {
     x: usize,
     y: usize,
-    grid: Vec<Vec<Option<Note>>>,
     mode: Mode,
     cmd_line: String,
     curr_input: Vec<char>,
@@ -47,7 +47,6 @@ impl App {
         App {
             x: 0,
             y: 0,
-            grid: vec![vec![None; 8]; 16],
             mode: Mode::Normal,
             cmd_line: String::from(""),
             curr_input: vec![],
@@ -56,9 +55,13 @@ impl App {
         }
     }
 
+    fn get_state(&self) -> &State {
+        self.history.get_state()
+    }
+
     fn update_input_line(&self) -> Result<()> {
         let mut stdout = stdout();
-        queue!(stdout, cursor::MoveTo(0, self.grid.len() as u16))?;
+        queue!(stdout, cursor::MoveTo(0, self.get_state().len() as u16))?;
         print!("{}", self.cmd_line);
         queue!(stdout, cursor::MoveTo(self.x as u16, self.y as u16))?;
         Ok(())
@@ -74,7 +77,7 @@ impl App {
         // clear the terminal
         queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
-        for (y, row) in self.grid.iter().enumerate() {
+        for (y, row) in self.get_state().iter().enumerate() {
             for (x, cell) in row.iter().enumerate() {
                 let x = x * CELL_WIDTH;
                 queue!(stdout, cursor::MoveTo(x as u16, y as u16))?;
@@ -109,6 +112,9 @@ impl App {
                     if ch.is_numeric() {
                         self.curr_input.push(ch);
 
+                        // log::info!("x {:?}", self.x);
+                        // log::info!("y {:?}", self.y);
+
                         if let Ok(pitch) = self
                             .curr_input
                             .clone()
@@ -133,11 +139,12 @@ impl App {
                                 if self.x > 0 {
                                     self.x -= CELL_WIDTH;
                                 } else {
-                                    self.x = self.grid[self.y].len() * CELL_WIDTH - CELL_WIDTH;
+                                    self.x =
+                                        self.get_state()[self.y].len() * CELL_WIDTH - CELL_WIDTH;
                                 }
                             }
                             'j' => {
-                                if self.y + CELL_HEIGHT < self.grid.len() {
+                                if self.y + CELL_HEIGHT < self.get_state().len() {
                                     self.y += CELL_HEIGHT;
                                 } else {
                                     self.y = 0;
@@ -147,24 +154,29 @@ impl App {
                                 if self.y > 0 {
                                     self.y -= CELL_HEIGHT;
                                 } else {
-                                    self.y = self.grid.len() - CELL_HEIGHT;
+                                    self.y = self.get_state().len() - CELL_HEIGHT;
                                 }
                             }
                             'l' => {
-                                if self.x + CELL_WIDTH < self.grid[self.y].len() * CELL_WIDTH {
+                                if self.x + CELL_WIDTH < self.get_state()[self.y].len() * CELL_WIDTH
+                                {
                                     self.x += CELL_WIDTH;
                                 } else {
                                     self.x = 0;
                                 }
                             }
                             'u' => {
-                                self.undo();
+                                self.history.undo();
                             }
                             'r' => {
-                                self.redo();
+                                self.history.redo();
                             }
                             'x' => {
-                                self.grid[self.y][self.x / CELL_WIDTH] = None;
+                                let cmd = Command::Delete {
+                                    x: self.x / CELL_WIDTH,
+                                    y: self.y,
+                                };
+                                self.apply(cmd);
                             }
                             ':' => {
                                 self.cmd_line = ":".to_string();
@@ -197,20 +209,16 @@ impl App {
     }
 
     fn apply(&mut self, cmd: Command) {
+        let mut state = self.get_state().clone();
         match cmd {
             Command::Insert { x, y, note } => {
-                self.grid[y][x] = Some(note);
+                state[y][x] = Some(note);
+            }
+            Command::Delete { x, y } => {
+                state[y][x] = None;
             }
         }
-        self.history.push(cmd.clone());
-    }
-
-    fn undo(&mut self) {
-        self.history.undo(&mut self.grid);
-    }
-
-    fn redo(&mut self) {
-        self.history.redo(&mut self.grid);
+        self.history.push(state);
     }
 
     pub fn run(&mut self) -> Result<()> {

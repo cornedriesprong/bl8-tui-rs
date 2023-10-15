@@ -7,9 +7,6 @@ use app::App;
 
 mod history;
 
-const CELL_WIDTH: usize = 4;
-const CELL_HEIGHT: usize = 1;
-
 fn main() -> Result<()> {
     // init logging
     let log_file = File::create("log.txt").unwrap();

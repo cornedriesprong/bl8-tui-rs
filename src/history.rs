@@ -1,42 +1,39 @@
-use crate::app::{Command, Note};
+use crate::app::Note;
+
+pub type State = Vec<Vec<Option<Note>>>;
 
 pub struct History {
-    hist: Vec<Command>,
+    history: Vec<State>,
     pos: usize,
 }
 
 impl History {
     pub fn new() -> History {
         History {
-            hist: Vec::new(),
+            history: vec![vec![vec![None; 8]; 16]],
             pos: 0,
         }
     }
 
-    pub fn push(&mut self, cmd: Command) {
-        self.hist.push(cmd);
+    pub fn get_state(&self) -> &State {
+        &self.history[self.pos]
+    }
+
+    pub fn push(&mut self, state: State) {
+        self.history.truncate(self.pos + 1);
+        self.history.push(state);
         self.pos += 1;
     }
 
-    pub fn undo(&mut self, grid: &mut Vec<Vec<Option<Note>>>) {
+    pub fn undo(&mut self) {
         if self.pos > 0 {
             self.pos -= 1;
-            let cmd = &self.hist[self.pos];
-
-            match cmd {
-                Command::Insert { x, y, note: _ } => grid[*y][*x] = None,
-            }
         }
     }
 
-    pub fn redo(&mut self, grid: &mut Vec<Vec<Option<Note>>>) {
-        if self.pos < self.hist.len() {
-            let cmd = &self.hist[self.pos];
+    pub fn redo(&mut self) {
+        if self.pos < self.history.len() - 1 {
             self.pos += 1;
-
-            match cmd {
-                Command::Insert { x, y, note } => grid[*y][*x] = Some(*note),
-            }
         }
     }
 }

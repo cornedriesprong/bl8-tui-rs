@@ -1,17 +1,126 @@
-use crate::history::{Note, Track};
-
-use crate::history::State;
+use crate::history::{State, Track};
 use crate::limiter::Limiter;
+use crate::utils::midi_to_freq;
+use crossbeam::channel::*;
+use mi_plaits_dsp::dsp::drums::*;
 use mi_plaits_dsp::dsp::voice::{Modulations, Patch, Voice};
 
 pub const SEQ_TRACK_COUNT: usize = 8;
 const BLOCK_SIZE: usize = 1;
 
-struct Params {
-    engine: usize,
-    harmonics: f32,
-    morph: f32,
-    timbre: f32,
+struct Kick {
+    engine: analog_bass_drum::AnalogBassDrum,
+    pitch: i8,
+    trigger: bool,
+}
+
+impl Kick {
+    pub fn new() -> Self {
+        return Self {
+            engine: analog_bass_drum::AnalogBassDrum::new(),
+            pitch: 40,
+            trigger: false,
+        };
+    }
+
+    #[inline]
+    fn tick(&mut self) -> f32 {
+        let mut out = [0.0; BLOCK_SIZE];
+
+        let f0 = midi_to_freq(self.pitch) / 48000.0;
+        self.engine
+            .render(false, self.trigger, 1.0, f0, 1.0, 0.5, 0.0, 0.0, &mut out);
+        self.trigger = false;
+
+        out[0]
+    }
+
+    fn play(&mut self, pitch: i8, velocity: i8) {
+        self.pitch = pitch;
+        self.trigger = true;
+    }
+}
+
+struct Snare {
+    engine: analog_snare_drum::AnalogSnareDrum,
+    pitch: i8,
+    trigger: bool,
+}
+
+impl Snare {
+    pub fn new() -> Self {
+        return Self {
+            engine: analog_snare_drum::AnalogSnareDrum::new(),
+            pitch: 40,
+            trigger: false,
+        };
+    }
+
+    #[inline]
+    fn tick(&mut self) -> f32 {
+        let mut out = [0.0; BLOCK_SIZE];
+
+        let f0 = midi_to_freq(self.pitch) / 48000.0;
+        self.engine
+            .render(false, self.trigger, 1.0, f0, 0.5, 0.5, 0.5, &mut out);
+        self.trigger = false;
+
+        out[0]
+    }
+
+    fn play(&mut self, pitch: i8, velocity: i8) {
+        self.pitch = pitch;
+        self.trigger = true;
+    }
+}
+
+struct Hihat {
+    engine: hihat::Hihat,
+    pitch: i8,
+    trigger: bool,
+}
+
+impl Hihat {
+    pub fn new() -> Self {
+        return Self {
+            engine: hihat::Hihat::new(),
+            pitch: 40,
+            trigger: false,
+        };
+    }
+
+    #[inline]
+    fn tick(&mut self) -> f32 {
+        let mut out = [0.0; BLOCK_SIZE];
+        let mut temp_1 = [0.0; BLOCK_SIZE];
+        let mut temp_2 = [0.0; BLOCK_SIZE];
+
+        let f0 = midi_to_freq(self.pitch) / 48000.0;
+        self.engine.render(
+            false,
+            self.trigger,
+            1.0,
+            f0,
+            0.5,
+            0.5,
+            0.5,
+            &mut temp_1,
+            &mut temp_2,
+            &mut out,
+            hihat::NoiseType::RingMod,
+            hihat::VcaType::Swing,
+            false,
+            false,
+        );
+        self.trigger = false;
+
+        out[0]
+    }
+
+    fn play(&mut self, pitch: i8, velocity: i8) {
+        self.pitch = pitch;
+        self.trigger = true;
+    }
 }
 
 // 0 virtual_analog_vcf_engine
@@ -40,39 +149,42 @@ struct Params {
 // 23 bass_drum_engine
 // 24 snare_drum_engine
 // 25 hihat_engine
-struct Channel<'a> {
+struct Synth<'a> {
     voice: Voice<'a>,
     patch: Patch,
     modulations: Modulations,
-    params: Params,
+    engine: usize,
+    harmonics: f32,
+    morph: f32,
+    timbre: f32,
 }
 
-impl Channel<'_> {
+impl Synth<'_> {
     fn new() -> Self {
         Self {
             voice: Voice::new(&std::alloc::System, BLOCK_SIZE),
             patch: Patch::default(),
             modulations: Modulations::default(),
-            params: Params {
-                engine: 1,
-                morph: 0.5,
-                harmonics: 0.5,
-                timbre: 0.5,
-            },
+            engine: 1,
+            morph: 0.5,
+            harmonics: 0.5,
+            timbre: 0.5,
         }
     }
 
     fn init(&mut self) {
+        self.modulations.trigger_patched = true;
+        self.modulations.level_patched = true;
         self.voice.init();
-        self.reset_params()
+        self.reset_params();
     }
 
     fn reset_params(&mut self) {
         // reset params to saved settings (after changing them in sequence)
-        self.patch.engine = self.params.engine;
-        self.patch.harmonics = self.params.harmonics;
-        self.patch.timbre = self.params.timbre;
-        self.patch.morph = self.params.morph;
+        self.patch.engine = self.engine;
+        self.patch.harmonics = self.harmonics;
+        self.patch.timbre = self.timbre;
+        self.patch.morph = self.morph;
     }
 
     fn play(&mut self, pitch: i8, velocity: i8) {
@@ -102,25 +214,33 @@ impl Channel<'_> {
 }
 
 pub struct Engine<'a> {
-    channels: [Channel<'a>; SEQ_TRACK_COUNT],
+    kick: Kick,
+    snare: Snare,
+    hihat: Hihat,
+    channels: [Synth<'a>; SEQ_TRACK_COUNT],
     tracks: [Track; SEQ_TRACK_COUNT],
     limiter: Limiter,
     time: f32,
+    prev_time: i8,
     length: f32,
+    pub ui_channel: (Sender<i8>, Receiver<i8>),
 }
 
 impl Engine<'_> {
     pub fn new() -> Self {
         Self {
+            kick: Kick::new(),
+            snare: Snare::new(),
+            hihat: Hihat::new(),
             channels: [
-                Channel::new(),
-                Channel::new(),
-                Channel::new(),
-                Channel::new(),
-                Channel::new(),
-                Channel::new(),
-                Channel::new(),
-                Channel::new(),
+                Synth::new(),
+                Synth::new(),
+                Synth::new(),
+                Synth::new(),
+                Synth::new(),
+                Synth::new(),
+                Synth::new(),
+                Synth::new(),
             ],
             tracks: [
                 Track { notes: [None; 16] },
@@ -134,7 +254,9 @@ impl Engine<'_> {
             ],
             limiter: Limiter::new(10.0, 500.0, 1.0),
             time: 0.0,
+            prev_time: 0,
             length: 16.0,
+            ui_channel: crossbeam::channel::unbounded(),
         }
     }
 
@@ -148,25 +270,42 @@ impl Engine<'_> {
     pub fn tick(&mut self) -> f32 {
         self.increment_time();
 
-        for track_index in 0..SEQ_TRACK_COUNT {
-            for note_index in 0..16 {
-                if note_index as f32 != self.time {
+        if self.time as i8 != self.prev_time {
+            self.prev_time = self.time as i8;
+            self.ui_channel.0.send(self.time as i8).unwrap();
+        }
+
+        for track_idx in 0..SEQ_TRACK_COUNT {
+            for note_idx in 0..16 {
+                if note_idx as f32 != self.time {
                     continue;
                 }
-                if let Some(note) = self.tracks[track_index].notes[note_index] {
-                    let t = &mut self.channels[track_index];
-                    t.reset_params();
-                    t.play(note.pitch, note.velocity);
-                    note.parameters.engine.map(|v| t.patch.engine = v as usize);
-                    note.parameters.harmonics.map(|v| t.patch.harmonics = v);
-                    note.parameters.morph.map(|v| t.patch.morph = v);
-                    note.parameters.timbre.map(|v| t.patch.timbre = v);
+                if let Some(note) = self.tracks[track_idx].notes[note_idx] {
+                    if track_idx == 0 {
+                        self.kick.play(note.pitch, note.velocity);
+                    } else if track_idx == 1 {
+                        self.snare.play(note.pitch, note.velocity);
+                    } else if track_idx == 2 {
+                        self.hihat.play(note.pitch, note.velocity);
+                    } else {
+                        let t = &mut self.channels[track_idx];
+                        t.reset_params();
+                        t.play(note.pitch, note.velocity);
+                        note.parameters.engine.map(|v| t.patch.engine = v as usize);
+                        note.parameters.harmonics.map(|v| t.patch.harmonics = v);
+                        note.parameters.morph.map(|v| t.patch.morph = v);
+                        note.parameters.timbre.map(|v| t.patch.timbre = v);
+                    }
                 }
             }
         }
         // TODO: render and mix all tracks
         // let mut mix = self.tracks.iter().reduce(|a, b| a + b);
-        let mut mix = self.channels[0].tick();
+        let mult = 1.0 / 3.0;
+        let mut mix = self.kick.tick() * mult;
+        mix += self.snare.tick() * mult;
+        mix += self.hihat.tick() * mult;
+
         mix = self.limiter.tick(mix);
 
         mix

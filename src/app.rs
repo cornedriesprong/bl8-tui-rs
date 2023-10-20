@@ -4,10 +4,12 @@ use std::{
     time::Duration,
 };
 
+use crossbeam::channel::*;
 use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
     queue,
+    style::{self, PrintStyledContent, Stylize},
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 
@@ -33,6 +35,7 @@ pub enum Command {
 pub struct App {
     x: usize,
     y: usize,
+    active_step: i8,
     mode: EditingMode,
     cmd_line: String,
     curr_input: Vec<char>,
@@ -45,6 +48,7 @@ impl App {
         App {
             x: 0,
             y: 0,
+            active_step: 0,
             mode: EditingMode::Normal,
             cmd_line: String::from(""),
             curr_input: vec![],
@@ -79,11 +83,21 @@ impl App {
             for (y, step) in track.notes.iter().enumerate() {
                 let x = x * CELL_WIDTH;
                 queue!(stdout, cursor::MoveTo(x as u16, y as u16))?;
+
                 if let Some(note) = step {
                     print!("{}", note.pitch);
                 } else {
                     print!("___ ");
                 }
+            }
+
+            for i in 0..CELL_WIDTH {
+                let x = x * CELL_WIDTH + i;
+                queue!(
+                    stdout,
+                    cursor::MoveTo(x as u16, self.active_step as u16),
+                    style::PrintStyledContent("░".dark_magenta())
+                )?;
             }
         }
 
@@ -234,6 +248,9 @@ impl App {
         let (_, rx) = &self.history.channel;
         let rx = rx.clone();
 
+        let (_, ui_rx) = &engine.ui_channel;
+        let ui_rx = ui_rx.clone();
+
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
         let stream = device.build_output_stream(
@@ -254,22 +271,23 @@ impl App {
         )?;
         stream.play()?;
 
-        self.draw_ui()?;
+        self.draw_ui(ui_rx)?;
 
         Ok(())
     }
 
-    fn draw_ui(&mut self) -> anyhow::Result<()> {
+    fn draw_ui(&mut self, rx: Receiver<i8>) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = stdout();
         terminal::enable_raw_mode()?;
-        self.draw()?;
 
         loop {
-            if poll(Duration::from_millis(100))? {
+            rx.try_recv().map(|s| self.active_step = s).ok();
+            self.draw()?;
+
+            if poll(Duration::from_millis(10))? {
                 let evt = read()?;
                 self.process_key(evt);
-                self.draw()?;
                 if self.exit {
                     break;
                 }

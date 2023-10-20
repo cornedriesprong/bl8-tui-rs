@@ -1,3 +1,4 @@
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::{
     io::{stdout, Result, Write},
     time::Duration,
@@ -10,13 +11,15 @@ use crossterm::{
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 
-use crate::history::{History, State};
+use crate::engine::Engine;
+use crate::history::{History, Note, State};
 
+pub const SAMPLE_RATE: f32 = 48000.0;
 const CELL_WIDTH: usize = 4;
 const CELL_HEIGHT: usize = 1;
 
 #[derive(Clone, Copy)]
-enum Mode {
+enum EditingMode {
     Normal,
     Command,
 }
@@ -27,15 +30,10 @@ pub enum Command {
     Delete { x: usize, y: usize },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Note {
-    pitch: i8,
-}
-
 pub struct App {
     x: usize,
     y: usize,
-    mode: Mode,
+    mode: EditingMode,
     cmd_line: String,
     curr_input: Vec<char>,
     history: History,
@@ -47,7 +45,7 @@ impl App {
         App {
             x: 0,
             y: 0,
-            mode: Mode::Normal,
+            mode: EditingMode::Normal,
             cmd_line: String::from(""),
             curr_input: vec![],
             history: History::new(),
@@ -61,7 +59,7 @@ impl App {
 
     fn update_input_line(&self) -> Result<()> {
         let mut stdout = stdout();
-        queue!(stdout, cursor::MoveTo(0, self.get_state().len() as u16))?;
+        queue!(stdout, cursor::MoveTo(0, 16))?;
         print!("{}", self.cmd_line);
         queue!(stdout, cursor::MoveTo(self.x as u16, self.y as u16))?;
         Ok(())
@@ -77,11 +75,11 @@ impl App {
         // clear the terminal
         queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
-        for (y, row) in self.get_state().iter().enumerate() {
-            for (x, cell) in row.iter().enumerate() {
+        for (x, track) in self.get_state().iter().enumerate() {
+            for (y, step) in track.notes.iter().enumerate() {
                 let x = x * CELL_WIDTH;
                 queue!(stdout, cursor::MoveTo(x as u16, y as u16))?;
-                if let Some(note) = cell {
+                if let Some(note) = step {
                     print!("{}", note.pitch);
                 } else {
                     print!("___ ");
@@ -92,10 +90,10 @@ impl App {
         queue!(stdout, cursor::MoveTo(self.x as u16, self.y as u16))?;
 
         match self.mode {
-            Mode::Normal => {
+            EditingMode::Normal => {
                 queue!(stdout, cursor::SetCursorStyle::SteadyBlock).unwrap();
             }
-            Mode::Command => {
+            EditingMode::Command => {
                 queue!(stdout, cursor::SetCursorStyle::SteadyBar).unwrap();
                 self.update_input_line()?;
             }
@@ -108,12 +106,9 @@ impl App {
     fn process_key(&mut self, key: Event) {
         match key {
             Event::Key(event) => match (self.mode, event.code) {
-                (Mode::Normal, KeyCode::Char(ch)) => {
+                (EditingMode::Normal, KeyCode::Char(ch)) => {
                     if ch.is_numeric() {
                         self.curr_input.push(ch);
-
-                        // log::info!("x {:?}", self.x);
-                        // log::info!("y {:?}", self.y);
 
                         if let Ok(pitch) = self
                             .curr_input
@@ -125,7 +120,7 @@ impl App {
                             let cmd = Command::Insert {
                                 x: self.x / CELL_WIDTH,
                                 y: self.y,
-                                note: Note { pitch },
+                                note: Note::new(self.y as f32, pitch, 100),
                             };
 
                             self.apply(cmd);
@@ -139,12 +134,13 @@ impl App {
                                 if self.x > 0 {
                                     self.x -= CELL_WIDTH;
                                 } else {
-                                    self.x =
-                                        self.get_state()[self.y].len() * CELL_WIDTH - CELL_WIDTH;
+                                    self.x = self.get_state().len() * CELL_WIDTH - CELL_WIDTH;
                                 }
                             }
                             'j' => {
-                                if self.y + CELL_HEIGHT < self.get_state().len() {
+                                if self.y + CELL_HEIGHT
+                                    < self.get_state()[self.x / CELL_WIDTH].notes.len()
+                                {
                                     self.y += CELL_HEIGHT;
                                 } else {
                                     self.y = 0;
@@ -154,12 +150,12 @@ impl App {
                                 if self.y > 0 {
                                     self.y -= CELL_HEIGHT;
                                 } else {
-                                    self.y = self.get_state().len() - CELL_HEIGHT;
+                                    self.y = self.get_state()[self.x / CELL_WIDTH].notes.len()
+                                        - CELL_HEIGHT;
                                 }
                             }
                             'l' => {
-                                if self.x + CELL_WIDTH < self.get_state()[self.y].len() * CELL_WIDTH
-                                {
+                                if self.x + CELL_WIDTH < self.get_state().len() * CELL_WIDTH {
                                     self.x += CELL_WIDTH;
                                 } else {
                                     self.x = 0;
@@ -180,27 +176,27 @@ impl App {
                             }
                             ':' => {
                                 self.cmd_line = ":".to_string();
-                                self.mode = Mode::Command;
+                                self.mode = EditingMode::Command;
                             }
                             _ => {}
                         }
                     }
                 }
-                (Mode::Command, KeyCode::Enter) => {
+                (EditingMode::Command, KeyCode::Enter) => {
                     if self.cmd_line.trim() == ":q" {
                         self.exit = true
                     }
                     self.cmd_line = String::from("");
-                    self.mode = Mode::Normal;
+                    self.mode = EditingMode::Normal;
                 }
-                (Mode::Command, KeyCode::Char(c)) => {
+                (EditingMode::Command, KeyCode::Char(c)) => {
                     self.cmd_line.push(c);
                 }
-                (Mode::Command, KeyCode::Backspace) => {
+                (EditingMode::Command, KeyCode::Backspace) => {
                     self.cmd_line.pop();
                 }
-                (Mode::Command, KeyCode::Esc) => {
-                    self.mode = Mode::Normal;
+                (EditingMode::Command, KeyCode::Esc) => {
+                    self.mode = EditingMode::Normal;
                 }
                 (_, _) => {}
             },
@@ -212,20 +208,61 @@ impl App {
         let mut state = self.get_state().clone();
         match cmd {
             Command::Insert { x, y, note } => {
-                state[y][x] = Some(note);
+                state[x].notes[y] = Some(note);
             }
             Command::Delete { x, y } => {
-                state[y][x] = None;
+                state[x].notes[y] = None;
             }
         }
+
         self.history.push(state);
+        // TODO: push new state to audio engine
     }
 
-    pub fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> anyhow::Result<()> {
+        let mut engine = Engine::new();
+        engine.init();
+
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .expect("Failed to get default output device");
+        let config = device.default_output_config().unwrap();
+
+        let channels = config.channels() as usize;
+
+        let (_, rx) = &self.history.channel;
+        let rx = rx.clone();
+
+        let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+
+        let stream = device.build_output_stream(
+            &config.into(),
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                // update state if needed
+                if let Ok(state) = rx.try_recv() {
+                    engine.set_state(state);
+                }
+                for frame in data.chunks_mut(channels) {
+                    for sample in frame.iter_mut() {
+                        *sample = engine.tick();
+                    }
+                }
+            },
+            err_fn,
+            None,
+        )?;
+        stream.play()?;
+
+        self.draw_ui()?;
+
+        Ok(())
+    }
+
+    fn draw_ui(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = stdout();
         terminal::enable_raw_mode()?;
-
         self.draw()?;
 
         loop {
@@ -241,6 +278,7 @@ impl App {
 
         disable_raw_mode()?;
         queue!(stdout, cursor::Show)?;
+
         Ok(())
     }
 }

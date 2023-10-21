@@ -8,7 +8,6 @@ use app::App;
 mod engine;
 mod history;
 mod limiter;
-mod sequencer;
 mod utils;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

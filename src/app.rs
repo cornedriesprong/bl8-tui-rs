@@ -32,11 +32,47 @@ pub enum Command {
     Delete { x: usize, y: usize },
 }
 
+pub enum Pitch {
+    C,
+    CSharp,
+    D,
+    DSharp,
+    E,
+    F,
+    FSharp,
+    G,
+    GSharp,
+    A,
+    ASharp,
+    B,
+}
+
+impl Pitch {
+    pub fn new(pitch: i8) -> Pitch {
+        match pitch {
+            0 => Pitch::C,
+            1 => Pitch::CSharp,
+            2 => Pitch::D,
+            3 => Pitch::DSharp,
+            4 => Pitch::E,
+            5 => Pitch::F,
+            6 => Pitch::FSharp,
+            7 => Pitch::G,
+            8 => Pitch::GSharp,
+            9 => Pitch::A,
+            10 => Pitch::ASharp,
+            11 => Pitch::B,
+            _ => Pitch::C,
+        }
+    }
+}
+
 pub struct App {
     x: usize,
     y: usize,
     active_step: i8,
     mode: EditingMode,
+    register: Option<String>,
     cmd_line: String,
     curr_input: Vec<char>,
     history: History,
@@ -50,6 +86,7 @@ impl App {
             y: 0,
             active_step: 0,
             mode: EditingMode::Normal,
+            register: None,
             cmd_line: String::from(""),
             curr_input: vec![],
             history: History::new(),
@@ -171,6 +208,20 @@ impl App {
                         }
                         'i' => {
                             self.mode = EditingMode::Insert;
+                        }
+                        'y' => {
+                            self.register =
+                                Some(self.get_grid()[self.x / CELL_WIDTH][self.y].clone());
+                        }
+                        'p' => {
+                            if let Some(reg) = &self.register {
+                                let cmd = Command::Insert {
+                                    x: self.x / CELL_WIDTH,
+                                    y: self.y,
+                                    input: reg.clone(),
+                                };
+                                self.apply(cmd);
+                            }
                         }
                         _ => {}
                     }

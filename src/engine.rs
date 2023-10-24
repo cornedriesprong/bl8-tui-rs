@@ -1,13 +1,59 @@
-use crate::history::{State, Track};
+use crate::history::Grid;
 use crate::limiter::Limiter;
 use crate::utils::midi_to_freq;
 use crossbeam::channel::*;
 use mi_plaits_dsp::dsp::drums::*;
 use mi_plaits_dsp::dsp::voice::{Modulations, Patch, Voice};
+use regex::Regex;
 
 pub const SEQ_TRACK_COUNT: usize = 8;
+pub const INITIAL_STEP_COUNT: usize = 16;
 const BLOCK_SIZE: usize = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Parameters {
+    pub engine: Option<f32>,
+    pub harmonics: Option<f32>,
+    pub morph: Option<f32>,
+    pub timbre: Option<f32>,
+}
+
+impl Parameters {
+    fn new() -> Parameters {
+        Parameters {
+            engine: None,
+            harmonics: None,
+            morph: None,
+            timbre: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Note {
+    pub timestamp: f32,
+    pub pitch: i8,
+    pub velocity: i8,
+    pub parameters: Parameters,
+}
+
+impl Note {
+    pub fn new(timestamp: f32, pitch: i8, velocity: i8) -> Note {
+        Note {
+            timestamp,
+            pitch,
+            velocity,
+            parameters: Parameters::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Track {
+    pub notes: [Option<Note>; 16],
+}
+
+pub type State = [Track; SEQ_TRACK_COUNT];
 struct Kick {
     engine: analog_bass_drum::AnalogBassDrum,
     pitch: i8,
@@ -311,10 +357,11 @@ impl Engine<'_> {
         mix
     }
 
-    pub fn set_state(&mut self, state: State) {
-        for (track_index, track) in state.iter().enumerate() {
-            for (note_index, note) in track.notes.iter().enumerate() {
-                self.tracks[track_index].notes[note_index] = *note;
+    pub fn set_state(&mut self, grid: Grid) {
+        for (track_index, track) in grid.iter().enumerate() {
+            for (note_index, input) in track.iter().enumerate() {
+                self.tracks[track_index].notes[note_index] =
+                    Engine::parse_input(input.to_string(), note_index);
             }
         }
     }
@@ -327,6 +374,24 @@ impl Engine<'_> {
         // clear all tracks
         for i in 0..SEQ_TRACK_COUNT {
             self.clear_track(i);
+        }
+    }
+
+    fn parse_input(input: String, note_index: usize) -> Option<Note> {
+        let re = Regex::new(r"\d").unwrap();
+        if re.is_match(&input) {
+            if let Ok(pitch) = input.parse::<i8>() {
+                Some(Note {
+                    timestamp: note_index as f32,
+                    pitch: pitch,
+                    velocity: 100,
+                    parameters: Parameters::new(),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
         }
     }
 

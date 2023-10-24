@@ -1,20 +1,19 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::{
-    io::{stdout, Result, Write},
-    time::Duration,
-};
-
 use crossbeam::channel::*;
 use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
     queue,
-    style::{self, PrintStyledContent, Stylize},
+    style::{self, Stylize},
     terminal::{self, disable_raw_mode, enable_raw_mode},
+};
+use std::{
+    io::{stdout, Result, Write},
+    time::Duration,
 };
 
 use crate::engine::Engine;
-use crate::history::{History, Note, State};
+use crate::history::{Grid, History};
 
 pub const SAMPLE_RATE: f32 = 48000.0;
 const CELL_WIDTH: usize = 4;
@@ -23,12 +22,13 @@ const CELL_HEIGHT: usize = 1;
 #[derive(Clone, Copy)]
 enum EditingMode {
     Normal,
+    Insert,
     Command,
 }
 
 #[derive(Clone)]
 pub enum Command {
-    Insert { x: usize, y: usize, note: Note },
+    Insert { x: usize, y: usize, input: String },
     Delete { x: usize, y: usize },
 }
 
@@ -57,8 +57,8 @@ impl App {
         }
     }
 
-    fn get_state(&self) -> &State {
-        self.history.get_state()
+    fn get_grid(&self) -> &Grid {
+        self.history.get_grid()
     }
 
     fn update_input_line(&self) -> Result<()> {
@@ -73,22 +73,17 @@ impl App {
         self.x = (self.x / CELL_WIDTH) * CELL_WIDTH;
     }
 
-    fn draw(&self) -> Result<()> {
+    fn draw(&mut self) -> Result<()> {
         let mut stdout = stdout();
 
         // clear the terminal
         queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
-        for (x, track) in self.get_state().iter().enumerate() {
-            for (y, step) in track.notes.iter().enumerate() {
+        for (x, track) in self.get_grid().iter().enumerate() {
+            for (y, cell) in track.iter().enumerate() {
                 let x = x * CELL_WIDTH;
                 queue!(stdout, cursor::MoveTo(x as u16, y as u16))?;
-
-                if let Some(note) = step {
-                    print!("{}", note.pitch);
-                } else {
-                    print!("___ ");
-                }
+                print!("{}", cell);
             }
 
             for i in 0..CELL_WIDTH {
@@ -106,12 +101,17 @@ impl App {
         match self.mode {
             EditingMode::Normal => {
                 queue!(stdout, cursor::SetCursorStyle::SteadyBlock).unwrap();
+                self.cmd_line = "-- NORMAL --".to_string();
+            }
+            EditingMode::Insert => {
+                queue!(stdout, cursor::SetCursorStyle::SteadyBar).unwrap();
+                self.cmd_line = "-- INSERT --".to_string();
             }
             EditingMode::Command => {
                 queue!(stdout, cursor::SetCursorStyle::SteadyBar).unwrap();
-                self.update_input_line()?;
             }
         }
+        self.update_input_line()?;
 
         stdout.flush()?;
         Ok(())
@@ -121,80 +121,68 @@ impl App {
         match key {
             Event::Key(event) => match (self.mode, event.code) {
                 (EditingMode::Normal, KeyCode::Char(ch)) => {
-                    if ch.is_numeric() {
-                        self.curr_input.push(ch);
-
-                        if let Ok(pitch) = self
-                            .curr_input
-                            .clone()
-                            .into_iter()
-                            .collect::<String>()
-                            .parse::<i8>()
-                        {
-                            let cmd = Command::Insert {
+                    self.align_cursor_to_grid();
+                    self.curr_input.clear();
+                    match ch {
+                        'h' => {
+                            if self.x > 0 {
+                                self.x -= CELL_WIDTH;
+                            } else {
+                                self.x = self.get_grid().len() * CELL_WIDTH - CELL_WIDTH;
+                            }
+                        }
+                        'j' => {
+                            if self.y + CELL_HEIGHT < self.get_grid()[self.x / CELL_WIDTH].len() {
+                                self.y += CELL_HEIGHT;
+                            } else {
+                                self.y = 0;
+                            }
+                        }
+                        'k' => {
+                            if self.y > 0 {
+                                self.y -= CELL_HEIGHT;
+                            } else {
+                                self.y = self.get_grid()[self.x / CELL_WIDTH].len() - CELL_HEIGHT;
+                            }
+                        }
+                        'l' => {
+                            if self.x + CELL_WIDTH < self.get_grid().len() * CELL_WIDTH {
+                                self.x += CELL_WIDTH;
+                            } else {
+                                self.x = 0;
+                            }
+                        }
+                        'u' => {
+                            self.history.undo();
+                        }
+                        'r' => {
+                            self.history.redo();
+                        }
+                        'x' => {
+                            let cmd = Command::Delete {
                                 x: self.x / CELL_WIDTH,
                                 y: self.y,
-                                note: Note::new(self.y as f32, pitch, 100),
                             };
-
                             self.apply(cmd);
-                            self.x += 1;
                         }
-                    } else {
-                        self.align_cursor_to_grid();
-                        self.curr_input.clear();
-                        match ch {
-                            'h' => {
-                                if self.x > 0 {
-                                    self.x -= CELL_WIDTH;
-                                } else {
-                                    self.x = self.get_state().len() * CELL_WIDTH - CELL_WIDTH;
-                                }
-                            }
-                            'j' => {
-                                if self.y + CELL_HEIGHT
-                                    < self.get_state()[self.x / CELL_WIDTH].notes.len()
-                                {
-                                    self.y += CELL_HEIGHT;
-                                } else {
-                                    self.y = 0;
-                                }
-                            }
-                            'k' => {
-                                if self.y > 0 {
-                                    self.y -= CELL_HEIGHT;
-                                } else {
-                                    self.y = self.get_state()[self.x / CELL_WIDTH].notes.len()
-                                        - CELL_HEIGHT;
-                                }
-                            }
-                            'l' => {
-                                if self.x + CELL_WIDTH < self.get_state().len() * CELL_WIDTH {
-                                    self.x += CELL_WIDTH;
-                                } else {
-                                    self.x = 0;
-                                }
-                            }
-                            'u' => {
-                                self.history.undo();
-                            }
-                            'r' => {
-                                self.history.redo();
-                            }
-                            'x' => {
-                                let cmd = Command::Delete {
-                                    x: self.x / CELL_WIDTH,
-                                    y: self.y,
-                                };
-                                self.apply(cmd);
-                            }
-                            ':' => {
-                                self.cmd_line = ":".to_string();
-                                self.mode = EditingMode::Command;
-                            }
-                            _ => {}
+                        ':' => {
+                            self.cmd_line = ":".to_string();
+                            self.mode = EditingMode::Command;
                         }
+                        'i' => {
+                            self.mode = EditingMode::Insert;
+                        }
+                        _ => {}
                     }
+                }
+                (EditingMode::Insert, KeyCode::Char(ch)) => {
+                    self.curr_input.push(ch);
+
+                    self.update_selected_cell();
+                    self.x += 1;
+                }
+                (EditingMode::Insert, KeyCode::Esc) => {
+                    self.mode = EditingMode::Normal;
                 }
                 (EditingMode::Command, KeyCode::Enter) => {
                     if self.cmd_line.trim() == ":q" {
@@ -209,28 +197,31 @@ impl App {
                 (EditingMode::Command, KeyCode::Backspace) => {
                     self.cmd_line.pop();
                 }
-                (EditingMode::Command, KeyCode::Esc) => {
-                    self.mode = EditingMode::Normal;
-                }
                 (_, _) => {}
             },
             _ => (),
         }
     }
 
+    fn update_selected_cell(&mut self) {
+        let input = self.curr_input.clone().into_iter().collect::<String>();
+        let cmd = Command::Insert {
+            x: self.x / CELL_WIDTH,
+            y: self.y,
+            input: input,
+        };
+
+        self.apply(cmd);
+    }
+
     fn apply(&mut self, cmd: Command) {
-        let mut state = self.get_state().clone();
+        let mut state = self.get_grid().clone();
         match cmd {
-            Command::Insert { x, y, note } => {
-                state[x].notes[y] = Some(note);
-            }
-            Command::Delete { x, y } => {
-                state[x].notes[y] = None;
-            }
+            Command::Insert { x, y, input } => state[x][y] = input,
+            Command::Delete { x, y } => state[x][y] = "___ ".to_string(),
         }
 
         self.history.push(state);
-        // TODO: push new state to audio engine
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
@@ -257,8 +248,8 @@ impl App {
             &config.into(),
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 // update state if needed
-                if let Ok(state) = rx.try_recv() {
-                    engine.set_state(state);
+                if let Ok(grid) = rx.try_recv() {
+                    engine.set_state(grid);
                 }
                 for frame in data.chunks_mut(channels) {
                     for sample in frame.iter_mut() {

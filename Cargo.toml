@@ -13,3 +13,4 @@ simplelog = "0.12.1"
 cpal = "0.15.2"
 anyhow = "1.0.75"
 mi-plaits-dsp = { git = "https://github.com/sourcebox/mi-plaits-dsp-rs.git", branch = "master" }
+regex = "1"

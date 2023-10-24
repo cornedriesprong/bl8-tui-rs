@@ -223,6 +223,30 @@ impl App {
                                 self.apply(cmd);
                             }
                         }
+                        '+' => {
+                            if let Ok(value) =
+                                self.get_grid()[self.x / CELL_WIDTH][self.y].parse::<i32>()
+                            {
+                                let cmd = Command::Insert {
+                                    x: self.x / CELL_WIDTH,
+                                    y: self.y,
+                                    input: (value + 1).to_string(),
+                                };
+                                self.apply(cmd);
+                            }
+                        }
+                        '-' => {
+                            if let Ok(value) =
+                                self.get_grid()[self.x / CELL_WIDTH][self.y].parse::<i32>()
+                            {
+                                let cmd = Command::Insert {
+                                    x: self.x / CELL_WIDTH,
+                                    y: self.y,
+                                    input: (value - 1).to_string(),
+                                };
+                                self.apply(cmd);
+                            }
+                        }
                         _ => {}
                     }
                 }

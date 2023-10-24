@@ -1,12 +1,13 @@
-use crate::engine::{INITIAL_STEP_COUNT, SEQ_TRACK_COUNT};
+use crate::engine::{Note, Parameters, State, Track, INITIAL_STEP_COUNT, SEQ_TRACK_COUNT};
 use crossbeam::channel::*;
+use regex::Regex;
 
 pub type Grid = Vec<Vec<String>>;
 
 pub struct History {
     history: Vec<Grid>,
     pos: usize,
-    pub channel: (Sender<Grid>, Receiver<Grid>),
+    pub channel: (Sender<State>, Receiver<State>),
 }
 
 impl History {
@@ -26,7 +27,8 @@ impl History {
     }
 
     pub fn push(&mut self, grid: Grid) {
-        self.channel.0.send(grid.clone()).unwrap();
+        let state = Self::to_state(grid.clone());
+        self.channel.0.send(state).unwrap();
         self.history.truncate(self.pos + 1);
         self.history.push(grid);
         self.pos += 1;
@@ -38,7 +40,8 @@ impl History {
         }
 
         let grid = self.history[self.pos].clone();
-        self.channel.0.send(grid).unwrap();
+        let state = Self::to_state(grid.clone());
+        self.channel.0.send(state).unwrap();
     }
 
     pub fn redo(&mut self) {
@@ -46,7 +49,42 @@ impl History {
             self.pos += 1;
         }
 
-        let state = self.history[self.pos].clone();
+        let grid = self.history[self.pos].clone();
+        let state = Self::to_state(grid.clone());
         self.channel.0.send(state).unwrap();
+    }
+
+    pub fn to_state(grid: Grid) -> State {
+        grid.iter()
+            .map(|track| Track {
+                notes: track
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cell)| History::parse_input(cell, index))
+                    .collect::<Vec<Option<Note>>>()
+                    .try_into()
+                    .unwrap(),
+            })
+            .collect::<Vec<Track>>()
+            .try_into()
+            .unwrap()
+    }
+
+    fn parse_input(input: &String, note_index: usize) -> Option<Note> {
+        let re = Regex::new(r"\d").unwrap();
+        if re.is_match(&input) {
+            if let Ok(pitch) = input.parse::<i8>() {
+                Some(Note {
+                    timestamp: note_index as f32,
+                    pitch,
+                    velocity: 100,
+                    parameters: Parameters::new(),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }

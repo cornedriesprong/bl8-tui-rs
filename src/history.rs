@@ -73,7 +73,7 @@ impl History {
 
     fn parse_input(input: &String, note_index: usize) -> Option<Note> {
         let re = Regex::new(r"\d").unwrap();
-        if let Some(index) = Self::pitch_to_number(input) {
+        if let Some(index) = Self::parse_pitch(input) {
             return Some(Note {
                 timestamp: note_index as f32,
                 pitch: index as i8,
@@ -96,29 +96,25 @@ impl History {
         }
     }
 
-    fn pitch_to_number(input: &str) -> Option<i32> {
-        if input.len() < 2 {
-            return None;
+    fn get_pitch(input: &str, len: usize, pitch_map: &HashMap<String, i32>) -> Option<i32> {
+        if input.len() >= len && input[0..len].chars().all(|c| c.is_alphabetic() || c == '#') {
+            let note = input[0..len].to_uppercase();
+            let octave = input[len..].parse::<i32>().unwrap_or(2);
+            return pitch_map.get(&note).map(|n| n + octave * 12);
         }
+        None
+    }
 
+    fn parse_pitch(input: &str) -> Option<i32> {
         let mut pitch_map = HashMap::new();
         let pitches = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "B"];
         for (index, pitch) in pitches.iter().enumerate() {
             pitch_map.insert(pitch.to_string(), (index + 12) as i32);
         }
 
-        // check whether the 1st and 2nd characters are letters or #
-        if input[0..2].chars().all(|c| c.is_alphabetic() || c == '#') {
-            let note = input[0..2].to_uppercase();
-            let octave: i32 = input[2..].parse().ok()?;
-            pitch_map.get(&note).map(|n| n + octave * 12)
-        } else if input[0..1].chars().all(|c| c.is_alphabetic()) {
-            let note = &input[0..1].to_string().to_uppercase();
-            let octave: i32 = input[1..].parse().ok()?;
-            pitch_map.get(note).map(|n| n + octave * 12)
-        } else {
-            return None;
-        }
+        Self::get_pitch(input, 2, &pitch_map)
+            .or_else(|| Self::get_pitch(input, 1, &pitch_map))
+            .or_else(|| Self::get_pitch(input, 0, &pitch_map))
     }
 }
 
@@ -151,6 +147,24 @@ mod tests {
             Some(Note {
                 timestamp: 1.0,
                 pitch: 24,
+                velocity: 100,
+                parameters: Parameters::new(),
+            })
+        );
+        assert_eq!(
+            History::parse_input(&"C".to_string(), 0),
+            Some(Note {
+                timestamp: 0.0,
+                pitch: 36,
+                velocity: 100,
+                parameters: Parameters::new(),
+            })
+        );
+        assert_eq!(
+            History::parse_input(&"D".to_string(), 0),
+            Some(Note {
+                timestamp: 0.0,
+                pitch: 38,
                 velocity: 100,
                 parameters: Parameters::new(),
             })

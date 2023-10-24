@@ -32,41 +32,6 @@ pub enum Command {
     Delete { x: usize, y: usize },
 }
 
-pub enum Pitch {
-    C,
-    CSharp,
-    D,
-    DSharp,
-    E,
-    F,
-    FSharp,
-    G,
-    GSharp,
-    A,
-    ASharp,
-    B,
-}
-
-impl Pitch {
-    pub fn new(pitch: i8) -> Pitch {
-        match pitch {
-            0 => Pitch::C,
-            1 => Pitch::CSharp,
-            2 => Pitch::D,
-            3 => Pitch::DSharp,
-            4 => Pitch::E,
-            5 => Pitch::F,
-            6 => Pitch::FSharp,
-            7 => Pitch::G,
-            8 => Pitch::GSharp,
-            9 => Pitch::A,
-            10 => Pitch::ASharp,
-            11 => Pitch::B,
-            _ => Pitch::C,
-        }
-    }
-}
-
 pub struct App {
     x: usize,
     y: usize,

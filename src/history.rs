@@ -1,4 +1,4 @@
-use crate::engine::{Note, Parameters, State, Track, INITIAL_STEP_COUNT, SEQ_TRACK_COUNT};
+use crate::engine::{Note, Params, State, Track, INITIAL_STEP_COUNT, SEQ_TRACK_COUNT};
 use crossbeam::channel::*;
 use regex::Regex;
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ impl History {
         History {
             history: vec![vec![
                 vec!["___ ".to_string(); INITIAL_STEP_COUNT];
-                SEQ_TRACK_COUNT
+                SEQ_TRACK_COUNT * 3
             ]],
             pos: 0,
             channel: crossbeam::channel::unbounded(),
@@ -55,14 +55,17 @@ impl History {
         let state = Self::to_state(grid.clone());
         self.channel.0.send(state).unwrap();
     }
-
-    pub fn to_state(grid: Grid) -> State {
-        grid.iter()
-            .map(|track| Track {
-                notes: track
+    pub fn to_state(grid: Grid) -> [Track; 8] {
+        grid.chunks(3)
+            .map(|g| Track {
+                notes: g[0]
                     .iter()
                     .enumerate()
-                    .map(|(index, cell)| History::parse_input(cell, index))
+                    .map(|(step, _)| {
+                        let cells =
+                            vec![g[0][step].clone(), g[1][step].clone(), g[2][step].clone()];
+                        History::parse_input(&cells, step)
+                    })
                     .collect::<Vec<Option<Note>>>()
                     .try_into()
                     .unwrap(),
@@ -72,22 +75,40 @@ impl History {
             .unwrap()
     }
 
-    fn parse_input(input: &String, note_index: usize) -> Option<Note> {
+    fn parse_input(input: &Vec<String>, note_index: usize) -> Option<Note> {
         let re = Regex::new(r"\d").unwrap();
-        if let Some(index) = Self::parse_pitch(input) {
+        if let Some(idx) = Self::parse_pitch(input[0].as_str()) {
             return Some(Note {
                 timestamp: note_index as f32,
-                pitch: index as i8,
+                pitch: idx as i8,
                 velocity: 100,
-                parameters: Parameters::new(),
+                parameters: {
+                    let mut params = Params::new();
+                    if let Ok(harmonics) = input[1].parse::<i8>() {
+                        params.harmonics = Some(harmonics as f32 / 100.0);
+                    }
+                    if let Ok(timbre) = input[2].parse::<i8>() {
+                        params.timbre = Some(timbre as f32 / 100.0);
+                    }
+                    params
+                },
             });
-        } else if re.is_match(&input) {
-            if let Ok(pitch) = input.parse::<i8>() {
+        } else if re.is_match(&input[0]) {
+            if let Ok(pitch) = input[0].parse::<i8>() {
                 Some(Note {
                     timestamp: note_index as f32,
                     pitch,
                     velocity: 100,
-                    parameters: Parameters::new(),
+                    parameters: {
+                        let mut params = Params::new();
+                        if let Ok(harmonics) = input[1].parse::<i8>() {
+                            params.harmonics = Some(harmonics as f32 / 100.0);
+                        }
+                        if let Ok(timbre) = input[2].parse::<i8>() {
+                            params.timbre = Some(timbre as f32 / 100.0);
+                        }
+                        params
+                    },
                 })
             } else {
                 None
@@ -108,8 +129,8 @@ impl History {
 
     fn parse_pitch(input: &str) -> Option<i32> {
         let mut pitch_map = HashMap::new();
-        for (index, pitch) in PITCHES.iter().enumerate() {
-            pitch_map.insert(pitch.to_string(), (index + 12) as i32);
+        for (idx, pitch) in PITCHES.iter().enumerate() {
+            pitch_map.insert(pitch.to_string(), (idx + 12) as i32);
         }
 
         Self::get_pitch(input, 2, &pitch_map)
@@ -125,48 +146,88 @@ mod tests {
     #[test]
     fn test_parse_input() {
         assert_eq!(
-            History::parse_input(&"C0".to_string(), 0),
+            History::parse_input(
+                &vec!["C0".to_string(), "50".to_string(), "50".to_string()],
+                0
+            ),
             Some(Note {
                 timestamp: 0.0,
                 pitch: 12,
                 velocity: 100,
-                parameters: Parameters::new(),
+                parameters: Params {
+                    engine: None,
+                    harmonics: Some(0.5),
+                    morph: Some(0.5),
+                    timbre: None,
+                }
             })
         );
         assert_eq!(
-            History::parse_input(&"C#0".to_string(), 1),
+            History::parse_input(
+                &vec!["C#0".to_string(), "50".to_string(), "50".to_string()],
+                1
+            ),
             Some(Note {
                 timestamp: 1.0,
                 pitch: 13,
                 velocity: 100,
-                parameters: Parameters::new(),
+                parameters: Params {
+                    engine: None,
+                    harmonics: Some(0.5),
+                    morph: Some(0.5),
+                    timbre: None,
+                }
             })
         );
         assert_eq!(
-            History::parse_input(&"C1".to_string(), 1),
+            History::parse_input(
+                &vec!["C1".to_string(), "50".to_string(), "50".to_string()],
+                1
+            ),
             Some(Note {
                 timestamp: 1.0,
                 pitch: 24,
                 velocity: 100,
-                parameters: Parameters::new(),
+                parameters: Params {
+                    engine: None,
+                    harmonics: Some(0.5),
+                    morph: Some(0.5),
+                    timbre: None,
+                }
             })
         );
         assert_eq!(
-            History::parse_input(&"C".to_string(), 0),
+            History::parse_input(
+                &vec!["C".to_string(), "50".to_string(), "50".to_string()],
+                0
+            ),
             Some(Note {
                 timestamp: 0.0,
                 pitch: 36,
                 velocity: 100,
-                parameters: Parameters::new(),
+                parameters: Params {
+                    engine: None,
+                    harmonics: Some(0.5),
+                    morph: Some(0.5),
+                    timbre: None,
+                }
             })
         );
         assert_eq!(
-            History::parse_input(&"D".to_string(), 0),
+            History::parse_input(
+                &vec!["D".to_string(), "50".to_string(), "50".to_string()],
+                0
+            ),
             Some(Note {
                 timestamp: 0.0,
                 pitch: 38,
                 velocity: 100,
-                parameters: Parameters::new(),
+                parameters: Params {
+                    engine: None,
+                    harmonics: Some(0.5),
+                    morph: Some(0.5),
+                    timbre: None,
+                }
             })
         );
     }

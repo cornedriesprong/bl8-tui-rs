@@ -23,6 +23,7 @@ const CELL_HEIGHT: usize = 1;
 enum EditingMode {
     Normal,
     Insert,
+    Visual,
     Command,
 }
 
@@ -41,6 +42,7 @@ pub struct App {
     cmd_line: String,
     curr_input: Vec<char>,
     history: History,
+    selection: Option<(usize, usize)>,
     exit: bool,
 }
 
@@ -55,6 +57,7 @@ impl App {
             cmd_line: String::from(""),
             curr_input: vec![],
             history: History::new(),
+            selection: None,
             exit: false,
         }
     }
@@ -65,7 +68,7 @@ impl App {
 
     fn update_input_line(&self) -> Result<()> {
         let mut stdout = stdout();
-        queue!(stdout, cursor::MoveTo(0, 16))?;
+        queue!(stdout, cursor::MoveTo(0, 17))?;
         print!("{}", self.cmd_line);
         queue!(stdout, cursor::MoveTo(self.x as u16, self.y as u16))?;
         Ok(())
@@ -81,18 +84,21 @@ impl App {
         // clear the terminal
         queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
+        queue!(stdout, cursor::MoveTo(0, 0))?;
+        print!("KICK        SNARE       HIHAT");
         for (x, track) in self.get_grid().iter().enumerate() {
             for (y, cell) in track.iter().enumerate() {
+                let y = y + 1;
                 let x = x * CELL_WIDTH;
                 queue!(stdout, cursor::MoveTo(x as u16, y as u16))?;
                 print!("{}", cell);
             }
 
-            for i in 0..CELL_WIDTH {
-                let x = x * CELL_WIDTH + i;
+            for _ in 0..CELL_WIDTH {
+                let x = x * CELL_WIDTH;
                 queue!(
                     stdout,
-                    cursor::MoveTo(x as u16, self.active_step as u16),
+                    cursor::MoveTo(x as u16, (self.active_step + 1) as u16),
                     style::PrintStyledContent("░".dark_magenta())
                 )?;
             }
@@ -109,6 +115,10 @@ impl App {
                 queue!(stdout, cursor::SetCursorStyle::SteadyBar).unwrap();
                 self.cmd_line = "-- INSERT --".to_string();
             }
+            EditingMode::Visual => {
+                queue!(stdout, cursor::SetCursorStyle::SteadyBlock).unwrap();
+                self.cmd_line = "-- VISUAL --".to_string();
+            }
             EditingMode::Command => {
                 queue!(stdout, cursor::SetCursorStyle::SteadyBar).unwrap();
             }
@@ -122,7 +132,7 @@ impl App {
     fn process_key(&mut self, key: Event) {
         match key {
             Event::Key(event) => match (self.mode, event.code) {
-                (EditingMode::Normal, KeyCode::Char(ch)) => {
+                (EditingMode::Normal | EditingMode::Visual, KeyCode::Char(ch)) => {
                     self.align_cursor_to_grid();
                     self.curr_input.clear();
                     match ch {
@@ -178,6 +188,9 @@ impl App {
                         'y' => {
                             self.yank();
                         }
+                        'v' => {
+                            self.mode = EditingMode::Visual;
+                        }
                         'p' => {
                             if let Some(reg) = &self.register {
                                 let cmd = Command::Insert {
@@ -189,7 +202,7 @@ impl App {
                             }
                         }
                         '+' => {
-                            let value = &self.get_grid()[self.x / CELL_WIDTH][self.y];
+                            let value = &self.get_grid()[self.x / CELL_WIDTH][self.y - 1];
                             if let Ok(value) = value.parse::<i32>() {
                                 let cmd = Command::Insert {
                                     x: self.x / CELL_WIDTH,
@@ -210,7 +223,7 @@ impl App {
                             }
                         }
                         '-' => {
-                            let value = &self.get_grid()[self.x / CELL_WIDTH][self.y];
+                            let value = &self.get_grid()[self.x / CELL_WIDTH][self.y - 1];
                             if let Ok(value) = value.parse::<i32>() {
                                 let cmd = Command::Insert {
                                     x: self.x / CELL_WIDTH,
@@ -260,6 +273,9 @@ impl App {
                 (EditingMode::Command, KeyCode::Backspace) => {
                     self.cmd_line.pop();
                 }
+                (EditingMode::Visual, KeyCode::Esc) => {
+                    self.mode = EditingMode::Normal;
+                }
                 (_, _) => {}
             },
             _ => (),
@@ -271,21 +287,21 @@ impl App {
         let cmd = Command::Insert {
             x: self.x / CELL_WIDTH,
             y: self.y,
-            input: input,
+            input,
         };
 
         self.apply(cmd);
     }
 
     fn yank(&mut self) {
-        self.register = Some(self.get_grid()[self.x / CELL_WIDTH][self.y].clone());
+        self.register = Some(self.get_grid()[self.x / CELL_WIDTH][self.y - 1].clone());
     }
 
     fn apply(&mut self, cmd: Command) {
         let mut state = self.get_grid().clone();
         match cmd {
-            Command::Insert { x, y, input } => state[x][y] = input,
-            Command::Delete { x, y } => state[x][y] = "___ ".to_string(),
+            Command::Insert { x, y, input } => state[x][y - 1] = input,
+            Command::Delete { x, y } => state[x][y - 1] = "___ ".to_string(),
         }
 
         self.history.push(state);

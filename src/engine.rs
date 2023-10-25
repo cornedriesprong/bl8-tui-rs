@@ -1,4 +1,3 @@
-use crate::history::Grid;
 use crate::limiter::Limiter;
 use crate::utils::midi_to_freq;
 use crossbeam::channel::*;
@@ -10,16 +9,16 @@ pub const INITIAL_STEP_COUNT: usize = 16;
 const BLOCK_SIZE: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Parameters {
+pub struct Params {
     pub engine: Option<f32>,
     pub harmonics: Option<f32>,
     pub morph: Option<f32>,
     pub timbre: Option<f32>,
 }
 
-impl Parameters {
-    pub fn new() -> Parameters {
-        Parameters {
+impl Params {
+    pub fn new() -> Params {
+        Params {
             engine: None,
             harmonics: None,
             morph: None,
@@ -33,7 +32,7 @@ pub struct Note {
     pub timestamp: f32,
     pub pitch: i8,
     pub velocity: i8,
-    pub parameters: Parameters,
+    pub parameters: Params,
 }
 
 impl Note {
@@ -42,7 +41,7 @@ impl Note {
             timestamp,
             pitch,
             velocity,
-            parameters: Parameters::new(),
+            parameters: Params::new(),
         }
     }
 }
@@ -58,6 +57,8 @@ struct Kick {
     engine: analog_bass_drum::AnalogBassDrum,
     pitch: i8,
     trigger: bool,
+    p1: f32,
+    p2: f32,
 }
 
 impl Kick {
@@ -66,6 +67,8 @@ impl Kick {
             engine: analog_bass_drum::AnalogBassDrum::new(),
             pitch: 40,
             trigger: false,
+            p1: 0.5,
+            p2: 0.5,
         };
     }
 
@@ -74,8 +77,17 @@ impl Kick {
         let mut out = [0.0; BLOCK_SIZE];
 
         let f0 = midi_to_freq(self.pitch) / 48000.0;
-        self.engine
-            .render(false, self.trigger, 1.0, f0, 1.0, 0.5, 0.0, 0.0, &mut out);
+        self.engine.render(
+            false,
+            self.trigger,
+            1.0,
+            f0,
+            self.p1,
+            self.p2,
+            0.0,
+            0.0,
+            &mut out,
+        );
         self.trigger = false;
 
         out[0]
@@ -91,6 +103,8 @@ struct Snare {
     engine: analog_snare_drum::AnalogSnareDrum,
     pitch: i8,
     trigger: bool,
+    p1: f32,
+    p2: f32,
 }
 
 impl Snare {
@@ -99,6 +113,8 @@ impl Snare {
             engine: analog_snare_drum::AnalogSnareDrum::new(),
             pitch: 40,
             trigger: false,
+            p1: 0.5,
+            p2: 0.5,
         };
     }
 
@@ -107,8 +123,16 @@ impl Snare {
         let mut out = [0.0; BLOCK_SIZE];
 
         let f0 = midi_to_freq(self.pitch) / 48000.0;
-        self.engine
-            .render(false, self.trigger, 1.0, f0, 0.5, 0.5, 0.5, &mut out);
+        self.engine.render(
+            false,
+            self.trigger,
+            1.0,
+            f0,
+            self.p1,
+            self.p2,
+            0.5,
+            &mut out,
+        );
         self.trigger = false;
 
         out[0]
@@ -124,6 +148,8 @@ struct Hihat {
     engine: hihat::Hihat,
     pitch: i8,
     trigger: bool,
+    p1: f32,
+    p2: f32,
 }
 
 impl Hihat {
@@ -132,6 +158,8 @@ impl Hihat {
             engine: hihat::Hihat::new(),
             pitch: 40,
             trigger: false,
+            p1: 0.5,
+            p2: 0.5,
         };
     }
 
@@ -147,8 +175,8 @@ impl Hihat {
             self.trigger,
             1.0,
             f0,
-            0.5,
-            0.5,
+            self.p1,
+            self.p2,
             0.5,
             &mut temp_1,
             &mut temp_2,
@@ -328,10 +356,16 @@ impl Engine<'_> {
                 }
                 if let Some(note) = self.tracks[track_idx].notes[note_idx] {
                     if track_idx == 0 {
+                        self.kick.p1 = note.parameters.harmonics.unwrap_or(0.5);
+                        self.kick.p2 = note.parameters.timbre.unwrap_or(0.5);
                         self.kick.play(note.pitch, note.velocity);
                     } else if track_idx == 1 {
+                        self.snare.p1 = note.parameters.harmonics.unwrap_or(0.5);
+                        self.snare.p2 = note.parameters.timbre.unwrap_or(0.5);
                         self.snare.play(note.pitch, note.velocity);
                     } else if track_idx == 2 {
+                        self.hihat.p1 = note.parameters.harmonics.unwrap_or(0.5);
+                        self.hihat.p2 = note.parameters.timbre.unwrap_or(0.5);
                         self.hihat.play(note.pitch, note.velocity);
                     } else {
                         let t = &mut self.channels[track_idx];

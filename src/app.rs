@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::engine::Engine;
-use crate::history::{Grid, History};
+use crate::history::{Grid, History, PITCHES};
 
 pub const SAMPLE_RATE: f32 = 48000.0;
 const CELL_WIDTH: usize = 4;
@@ -161,6 +161,7 @@ impl App {
                             self.history.redo();
                         }
                         'x' => {
+                            self.yank();
                             let cmd = Command::Delete {
                                 x: self.x / CELL_WIDTH,
                                 y: self.y,
@@ -175,8 +176,7 @@ impl App {
                             self.mode = EditingMode::Insert;
                         }
                         'y' => {
-                            self.register =
-                                Some(self.get_grid()[self.x / CELL_WIDTH][self.y].clone());
+                            self.yank();
                         }
                         'p' => {
                             if let Some(reg) = &self.register {
@@ -189,25 +189,48 @@ impl App {
                             }
                         }
                         '+' => {
-                            if let Ok(value) =
-                                self.get_grid()[self.x / CELL_WIDTH][self.y].parse::<i32>()
-                            {
+                            let value = &self.get_grid()[self.x / CELL_WIDTH][self.y];
+                            if let Ok(value) = value.parse::<i32>() {
                                 let cmd = Command::Insert {
                                     x: self.x / CELL_WIDTH,
                                     y: self.y,
                                     input: (value + 1).to_string(),
                                 };
                                 self.apply(cmd);
-                            }
-                        }
-                        '-' => {
-                            if let Ok(value) =
-                                self.get_grid()[self.x / CELL_WIDTH][self.y].parse::<i32>()
+                            } else if let Some(index) = PITCHES
+                                .iter()
+                                .position(|&p| p.to_uppercase() == value.to_uppercase())
                             {
                                 let cmd = Command::Insert {
                                     x: self.x / CELL_WIDTH,
                                     y: self.y,
+                                    input: PITCHES[(index + 1) % PITCHES.len()].to_string(),
+                                };
+                                self.apply(cmd);
+                            }
+                        }
+                        '-' => {
+                            let value = &self.get_grid()[self.x / CELL_WIDTH][self.y];
+                            if let Ok(value) = value.parse::<i32>() {
+                                let cmd = Command::Insert {
+                                    x: self.x / CELL_WIDTH,
+                                    y: self.y,
                                     input: (value - 1).to_string(),
+                                };
+                                self.apply(cmd);
+                            } else if let Some(index) = PITCHES
+                                .iter()
+                                .position(|&p| p.to_uppercase() == value.to_uppercase())
+                            {
+                                let index = if index == 0 {
+                                    PITCHES.len() - 1
+                                } else {
+                                    index - 1
+                                };
+                                let cmd = Command::Insert {
+                                    x: self.x / CELL_WIDTH,
+                                    y: self.y,
+                                    input: PITCHES[index].to_string(),
                                 };
                                 self.apply(cmd);
                             }
@@ -252,6 +275,10 @@ impl App {
         };
 
         self.apply(cmd);
+    }
+
+    fn yank(&mut self) {
+        self.register = Some(self.get_grid()[self.x / CELL_WIDTH][self.y].clone());
     }
 
     fn apply(&mut self, cmd: Command) {
@@ -313,6 +340,7 @@ impl App {
         terminal::enable_raw_mode()?;
 
         loop {
+            // TODO: redraw on every beat instead of continuously
             rx.try_recv().map(|s| self.active_step = s).ok();
             self.draw()?;
 

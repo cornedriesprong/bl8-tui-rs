@@ -3,6 +3,7 @@ use crossbeam::channel::*;
 use regex::Regex;
 use std::collections::HashMap;
 
+pub const PITCHES: [&str; 11] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "B"];
 pub type Grid = Vec<Vec<String>>;
 
 pub struct History {
@@ -107,8 +108,7 @@ impl History {
 
     fn parse_pitch(input: &str) -> Option<i32> {
         let mut pitch_map = HashMap::new();
-        let pitches = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "B"];
-        for (index, pitch) in pitches.iter().enumerate() {
+        for (index, pitch) in PITCHES.iter().enumerate() {
             pitch_map.insert(pitch.to_string(), (index + 12) as i32);
         }
 
